@@ -239,6 +239,13 @@ void LockScreen::onOutputChange() {
     return;
   }
   syncInstances();
+  if (m_instances.empty()) {
+    // All outputs are gone while the lock is pending or engaged. Keep the lock
+    // object so the session stays locked (surfaces are recreated when an output
+    // reconnects), but no surface can ever render now: run any pending
+    // post-lock action (e.g. suspend) instead of holding it until a timeout.
+    dispatchPendingAfterLocked();
+  }
 }
 
 void LockScreen::onThemeChanged() {
@@ -531,14 +538,14 @@ bool LockScreen::shouldUseBlurredDesktop() const {
 }
 
 bool LockScreen::allSurfacesReady() const {
-  if (m_instances.empty()) {
-    return false;
-  }
   for (const auto& instance : m_instances) {
     if (instance.surface != nullptr && !instance.surface->firstFrameRendered()) {
       return false;
     }
   }
+
+  // With all outputs disconnected, no surface can ever render, so allow pending
+  // actions to run instead of waiting for the fallback timeout.
   return true;
 }
 
