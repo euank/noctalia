@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 struct ScreencopyImage;
@@ -126,6 +127,10 @@ private:
   CompositorPlatform* m_compositorPlatform = nullptr;
   ext_session_lock_v1* m_lock = nullptr;
   std::vector<Instance> m_instances;
+  // ext-session-lock permits only one get_lock_surface request per output for a
+  // lock. Keep the claim even if local output metadata temporarily becomes
+  // unusable, so reconciliation can never issue a duplicate request.
+  std::unordered_set<std::uint32_t> m_claimedOutputNames;
   std::unordered_map<wl_output*, ScreencopyImage> m_desktopCaptures;
   PamAuthenticator m_authenticator;
   std::unique_ptr<FingerprintAuthenticator> m_fingerprint;

@@ -155,6 +155,7 @@ bool LockScreen::lock() {
 
   m_lockPending = true;
   m_locked = false;
+  m_claimedOutputNames.clear();
   clearSensitiveString(m_password);
   m_status = i18n::tr("lockscreen.waiting");
   m_statusIsError = false;
@@ -198,6 +199,7 @@ void LockScreen::unlock() {
 
   m_lockPending = false;
   m_locked = false;
+  m_claimedOutputNames.clear();
   clearSensitiveString(m_password);
   m_status.clear();
   m_statusIsError = false;
@@ -489,6 +491,7 @@ void LockScreen::handleFinished(void* data, ext_session_lock_v1* /*lock*/) {
   }
   self->m_lockPending = false;
   self->m_locked = false;
+  self->m_claimedOutputNames.clear();
   clearSensitiveString(self->m_password);
   self->m_status.clear();
   self->m_statusIsError = false;
@@ -510,7 +513,11 @@ void LockScreen::syncInstances() {
 
   std::erase_if(m_instances, [&](Instance& instance) {
     const auto it = std::ranges::find(outputs, instance.outputName, &WaylandOutput::name);
-    const bool exists = it != outputs.end() && it->done && it->output != nullptr && it->hasUsableGeometry();
+    // Once a lock surface has been requested, keep it until the wl_output
+    // global is actually removed. Output metadata can be temporarily
+    // incomplete during a mode change; destroying and recreating the surface
+    // for that state would issue get_lock_surface twice for the same output.
+    const bool exists = it != outputs.end() && it->output == instance.output;
     if (!exists && instance.surface != nullptr && instance.surface->wlSurface() == m_pointerSurface) {
       m_pointerSurface = nullptr;
     }
@@ -521,8 +528,7 @@ void LockScreen::syncInstances() {
     if (!output.done || output.output == nullptr || !output.hasUsableGeometry()) {
       continue;
     }
-    const bool exists = std::ranges::contains(m_instances, output.name, &Instance::outputName);
-    if (!exists) {
+    if (!m_claimedOutputNames.contains(output.name)) {
       createInstance(output);
     }
   }
@@ -687,6 +693,13 @@ void LockScreen::applyWallpaperStyleToSurfaces() {
 }
 
 void LockScreen::createInstance(const WaylandOutput& output) {
+  // A duplicate get_lock_surface request is a fatal protocol error. Record the
+  // claim before initialization so even re-entrant reconciliation cannot send
+  // a second request for this output.
+  if (!m_claimedOutputNames.insert(output.name).second) {
+    return;
+  }
+
   auto surface = std::make_unique<LockSurface>(*m_wayland, m_configService);
   surface->setRenderContext(m_renderContext);
   surface->setTextureCache(m_textureCache);
@@ -731,6 +744,7 @@ void LockScreen::resetLockState() {
   m_pendingAfterLocked = {};
   m_suspendTimeoutTimer.stop();
   m_lockDeferred = false;
+  m_claimedOutputNames.clear();
   if (m_lock == nullptr) {
     m_lockPending = false;
     m_locked = false;
